@@ -13,6 +13,7 @@
 #include <termios.h>
 //#include"sys/types.h"
 #include "sys/msg.h"
+#include "util_by_wei.h"
 //#include "unistd.h"
 //#include"stdio.h"
 typedef signed   char   int8;

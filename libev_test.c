@@ -20,7 +20,7 @@
 unsigned int topo_buffer[256*18+3];
 char phone_buf[11]={0};
 unsigned int sensor=0;
-int sockfd;
+int sockfd,qt_fd;
 struct timeval tv;
 fd_set sds;
 static int flag_bind=0;
@@ -63,15 +63,15 @@ void enqueue_int_queue(PUINT_QUEUE pQ, unsigned int c)
 }
 int main(int argc ,char** argv)
 {
-	int listen;
-	ev_io ev_io_watcher;
+    int listen;
+    ev_io ev_io_watcher;
 
 
 
     printf("flag_bind%d",flag_bind);
-	signal(SIGPIPE,SIG_IGN);
-	printf("start com monitor\n");	
-	listen=socket_init(argv);
+    signal(SIGPIPE,SIG_IGN);
+    printf("start com monitor\n");  
+    listen=socket_init(argv);
     printf("flag_bind%d",flag_bind);
     if(flag_bind)
     {
@@ -79,15 +79,15 @@ int main(int argc ,char** argv)
         ComPthreadMonitorStart();
 
     }
-	 printf("kkk\n");
+     printf("kkk\n");
 
     init_int_queue(&pQueue);
 
-	//struct ev_loop *loop = ev_loop_new(EVBACKEND_EPOLL);
-	struct ev_loop *loop = ev_default_loop(EVBACKEND_EPOLL);
-	ev_io_init(&ev_io_watcher, accept_callback,listen, EV_READ);
-	ev_io_start(loop,&ev_io_watcher); 
-	ev_loop(loop,0);
+    //struct ev_loop *loop = ev_loop_new(EVBACKEND_EPOLL);
+    struct ev_loop *loop = ev_default_loop(EVBACKEND_EPOLL);
+    ev_io_init(&ev_io_watcher, accept_callback,listen, EV_READ);
+    ev_io_start(loop,&ev_io_watcher); 
+    ev_loop(loop,0);
         ev_loop_destroy(loop);
         if(flag_bind)
         {
@@ -98,118 +98,160 @@ int main(int argc ,char** argv)
 
         printf("exit com monitor\n");
 
-	return 0;
+    return 0;
 
 }
 
 int socket_init(char** argv)
 {
 
-	struct sockaddr_in my_addr;
-	int listener;
-	//socklen_t len;
-	unsigned int myport, lisnum;
-	
-	if (argv[1])
-	{
-		printf("argv1%s\n",argv[1]);
-		myport = atoi(argv[1]);
-	}
-	else
-		myport = 7838;
+    struct sockaddr_in my_addr;
+    int listener;
+    //socklen_t len;
+    unsigned int myport, lisnum ;
+    
+    if (argv[1])
+    {
+        printf("argv1%s\n",argv[1]);
+        myport = atoi(argv[1]);
+    }
+    else
+        myport = 7838;
 
-	if (argv[2])
-	{	
-		printf("argv1%s\n",argv[2]);
-		lisnum = atoi(argv[2]);
-	}
-	else
-		lisnum = 2;
-	//int socket(int domain, int type, int protocol);creates  an endpoint for communication and returns a descrip-tor.
-	if ((listener = socket(PF_INET, SOCK_STREAM, 0)) == -1) 
-	{
+    if (argv[2])
+    {   
+        printf("argv2%s\n",argv[2]);
+        lisnum = atoi(argv[2]);
+    }
+    else
+        lisnum = 2;
+    //int socket(int domain, int type, int protocol);creates  an endpoint for communication and returns a descrip-tor.
+    /*The backlog argument provides a hint to the implementation which 
+    the implementation shall use to limit the number of outstanding 
+    connections in the socket's listen queue
+    backlog²ÎÊýÌá¹©Ò»¸öimplementationµÄÏßË÷,implementationÓ¦¸ÃÓÃ(Ëü)À´ÏÞÖÆÎ´¾öµÄÁ¬½Ó
+    ÊýÁ¿,(ÕâÐ©Á¬½Ó(ÇëÇó)ÔÚ listen¶ÓÁÐÀï)
+    */
+    if ((listener = socket(PF_INET, SOCK_STREAM, 0)) == -1) 
+    {
                 flag_bind=0;
                 perror("socket");
-		exit(1);
-	} 
-	else
-	{
+        exit(1);
+    } 
+    else
+    {
             printf("flag_bind=1\n");
                 flag_bind=1;
-		printf("SOCKET CREATE SUCCESS!\n");
-	}
-	//setnonblocking(listener);
-	int so_reuseaddr=1;
-	/* getsockopt()   and  setsockopt()  manipulate  options  for  the  socket
+        printf("SOCKET CREATE SUCCESS!\n");
+    }
+    //setnonblocking(listener);
+    int so_reuseaddr=1;
+    /* getsockopt()   and  setsockopt()  manipulate  options  for  the  socket
        referred to by the file descriptor sockfd.  Options may exist at multi-
        ple  protocol  levels;  they are always present at the uppermost socket
        level.int sockfd, int level, int optname, const void *optval, socklen_t optlen*/
-	setsockopt(listener,SOL_SOCKET,SO_REUSEADDR,&so_reuseaddr,sizeof(so_reuseaddr));
-	bzero(&my_addr, sizeof(my_addr));
-	my_addr.sin_family = PF_INET;
-	my_addr.sin_port = htons(myport);
-	if(argv[3])
-		my_addr.sin_addr.s_addr = inet_addr(argv[3]);
-	else 
-		my_addr.sin_addr.s_addr = INADDR_ANY;
+    setsockopt(listener,SOL_SOCKET,SO_REUSEADDR,&so_reuseaddr,sizeof(so_reuseaddr));
+    bzero(&my_addr, sizeof(my_addr));
+    my_addr.sin_family = PF_INET;
+    my_addr.sin_port = htons(myport);
+    if(argv[3])
+        my_addr.sin_addr.s_addr = inet_addr(argv[3]);
+    else 
+        my_addr.sin_addr.s_addr = INADDR_ANY;
 
 
-	if (bind(listener, (struct sockaddr *) &my_addr, sizeof(struct sockaddr))== -1) 
-	{
-		perror("bind error!\n");
-		exit(1);
-	} 
-	else
-	{
-		printf("BIND SUCCESS\n");
-		//printf("IP BIND SUCCESS,IP:%s\n",my_addr.sin_addr.s_addr);
-	}
+    if (bind(listener, (struct sockaddr *) &my_addr, sizeof(struct sockaddr))== -1) 
+    {
+        perror("bind error!\n");
+        exit(1);
+    } 
+    else
+    {
+        printf("BIND SUCCESS\n");
+        //printf("IP BIND SUCCESS,IP:%s\n",my_addr.sin_addr.s_addr);
+    }
 
-	if (listen(listener, lisnum) == -1) 
-	{
-		perror("listen error!\n");
-		exit(1);
-	} 
-	else
-	{
-		printf("LISTEN SUCCESS,PORT:%d\n",myport);
-	}
-	return listener;
+    if (listen(listener, lisnum) == -1) 
+    {
+        perror("listen error!\n");
+        exit(1);
+    } 
+
+    else
+    {
+        printf("LISTEN SUCCESS,PORT:%d\n",myport);
+    }
+    return listener;
 }
+
+#define QT_CLIENT_ADDR "10.0.136.142"
 
 void accept_callback(struct ev_loop *loop, ev_io *w, int revents)
 {
-	int newfd;
-	struct sockaddr_in their_addr;
-	socklen_t addrlen = sizeof(struct sockaddr);
-	ev_io* accept_watcher=malloc(sizeof(ev_io));
-	
-	while ((newfd = accept(w->fd, (struct sockaddr *)&their_addr, &addrlen)) < 0)
-	{
-		if (errno == EAGAIN || errno == EWOULDBLOCK) 
-		{
-		//these are transient, so don't log anything.
-			continue; 
-		}
-		else
-		{
-			printf("accept error.[%s]\n", strerror(errno));
-			break;
-		}
-	}
-	printf("Got connection from %s\n",inet_ntoa(their_addr.sin_addr));
-	ev_io_init(accept_watcher,recv_callback,newfd,EV_READ);
-	//ev_io_start(loop,accept_watcher);
-	//ev_io_init(accept_watcher,write_callback,newfd,EV_WRITE);
+    int newfd;
+    struct sockaddr_in their_addr;
+    socklen_t addrlen = sizeof(struct sockaddr);
+    ev_io* accept_watcher=malloc(sizeof(ev_io));
+
+    while ((newfd = accept(w->fd, (struct sockaddr *)&their_addr, &addrlen)) < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+        //these are transient, so don't log anything.
+            continue; 
+        }
+        else
+        {
+            printf("accept error.[%s]\n", strerror(errno));
+            break;
+        }
+    }
+    printf("Got connection from %s\n",inet_ntoa(their_addr.sin_addr));
+    if(!strcmp(inet_ntoa(their_addr.sin_addr),QT_CLIENT_ADDR)){
+        qt_fd = w->fd;
+        Udbg("get fd %d\n",qt_fd);
+    }
+
+    //@wei If connection came from other expcept for qt client.
+    /*if(strcmp(their_addr.sin_addr,QT_CLIENT_ADDR))
+    {
+        ev_io_init(accept_watcher,android_callback,newfd,EV_READ);
         ev_io_start(loop,accept_watcher);
-	printf("accept callback : fd :%d\n",accept_watcher->fd);
+        printf("android callback : fd :%d\n",accept_watcher->fd);
+    }else{*/
+    ev_io_init(accept_watcher,recv_callback,newfd,EV_READ);
+    //ev_io_start(loop,accept_watcher);
+    //ev_io_init(accept_watcher,write_callback,newfd,EV_WRITE);
+    ev_io_start(loop,accept_watcher);
+    printf("accept callback : fd :%d\n",accept_watcher->fd);        
+    
+
 
 }
+/**create by wei
+*
+*/
+void android_callback(struct ev_loop *loop, ev_io *w, int revents){
+    ULdbg();
+    //ecv_callback(loop, w, revents);
+    unsigned int buffer[15]={0};
+    unsigned int temp;
+    int i=0;
+    tv.tv_sec=60;
+    tv.tv_usec=0;
+    FD_ZERO(&sds);
+    FD_SET(w->fd, &sds);
+    /*int select(int nfds, fd_set *readfds, fd_set *writefds,
+              fd_set *exceptfds, struct timeval *timeout);*/
+    int ret = select((1+w->fd), &sds, NULL, NULL, &tv);
+}
+
+
 
 void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
 {
     printf("\nrecv_callback:\n");
-
+    //@wei indentify of sending message successfully.
     if(gSend==1)
     {
         gSend=0;
@@ -219,39 +261,44 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
 
         buffer[3]='\n';
 
-
         buffer[2]=1;
         write(w->fd, (unsigned int*)(&buffer), sizeof(buffer));
 
     }
-
+    printf("Line :%d\n",__LINE__);
     unsigned int buffer[15]={0};
     unsigned int temp;
-    int i=0;
+    int i=0,j;
     tv.tv_sec=60;
     tv.tv_usec=0;
     FD_ZERO(&sds);
     FD_SET(w->fd, &sds);
+    /*int select(int nfds, fd_set *readfds, fd_set *writefds,
+              fd_set *exceptfds, struct timeval *timeout);*/
     int ret = select((1+w->fd), &sds, NULL, NULL, &tv);
     if(ret >0)
     {
-        //printf("server select wait...\n");
+        printf("server select wait...\n");
         if (FD_ISSET(w->fd, &sds))
         {
-            //printf("server FD_ISSET...\n");
+            printf("server FD_ISSET...\n");
             int len=0;
             len=recv(w->fd,&buffer[i],sizeof(unsigned int),0);
             if(len>0)
             {
-                //printf("server buffer[i]=%d\n",buffer[i]);
-            while(buffer[i]!=0x0A)
+                printf("len :%d && server buffer[i]=%d\n",len,buffer[i]);
+            //@wei
+            //buffer[i] is not equaled with 0x0a.it  specify the data didn't reach END.
+            //while(buffer[i]!=0x0a)//original
+            while(buffer[len-2]!=0x0A)
             {
-               i++;
+               i++ ;//
                len=recv(w->fd,&buffer[i],sizeof(unsigned int),0);
-               //printf("server buffer[i]=%d\n",buffer[i]);
+               printf("len :%d && server buffer[i]=%d\n",len,buffer[i]);
             }
             if(buffer[0]==0x15)
             {
+                printf("temp: %d\n",buffer[1]);
                 temp=buffer[1];
                 switch(temp)
                 {
@@ -295,6 +342,9 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
                         printf("COMMAND:-------clear intrupt--------:\n");
                         gIntLock=0;
                         break;
+                case 0x09:
+                        Udbg("Command : get real time picture\n");
+                        ClientGetRealPic(w->fd);
                 default:
                         printf("error COMMAND\n");
                         break;
@@ -353,14 +403,16 @@ void write_callback(struct ev_loop *loop, ev_io *w, int revents)
 {
 
 
-	int fd=w->fd;
-	ev_io_stop(loop,  w);
+    int fd=w->fd;
+    ev_io_stop(loop,  w);
 
 }
 
 bool Server_GetZigBeeNwkInfo(int fd){
-	printf("Server:___________GetZigBeeNwkInfo\n");
-
+    printf("Server:___________GetZigBeeNwkInfo\n");
+/*int bufer [9]
+    0x26 0x02 panid chnnal  maxchild  maxdepth  maxrouter
+    */
         unsigned int buffer[9]={0};
         buffer[0]=0x26;
         buffer[1]=0x02;
@@ -475,10 +527,10 @@ bool Server_GetZigBeeNwkTopo(int fd){
     }
 
 
-	return TRUE;
+    return TRUE;
 }
 bool Server_GetTempHum(int fd){
-	printf("Server:___________GetTempHum\n");
+    printf("Server:___________GetTempHum\n");
 
         unsigned int buffer[5]={0};
         buffer[0]=0x26;
@@ -569,4 +621,38 @@ bool Server_SendGprsMessage(int fd,unsigned int *phone,unsigned int sensor){
 void gprs_send()
 {
 
+}
+
+int ClientGetRealPic(int qt_fd){
+    Udbg("Server:get qt Client real time Picture\n");
+    unsigned int buffer[4]={0};
+    buffer[0]=0x26;
+    buffer[1]=0x08;
+
+    buffer[3]='\n';
+
+    buffer[2]= 0 ;
+
+    int len=write(qt_fd, (unsigned int*)(&buffer), sizeof(buffer));
+    if(len<=0)
+    {
+
+        return 0;
+    }
+
+
+    return 1;
+}
+int qt_socket_fd;
+int Server_GetRealPic(int fd){
+    unsigned int buffer[4]={0};
+    buffer[0]=0x26;
+    buffer[1]=0x08;
+
+    buffer[3]='\n';
+
+    buffer[2]= 0 ;
+    if(qt_socket_fd > 0){
+
+    }
 }

@@ -1,0 +1,104 @@
+int handle_recv_data( ev_io *w , unsigned int *buufer)
+{
+        //printf("server select wait...\n");
+    if (FD_ISSET(w->fd, &sds))
+    {
+        //printf("server FD_ISSET...\n");
+        int len=0;
+        len=recv(w->fd,&buffer[i],sizeof(unsigned int),0);
+        if(len>0)
+        {
+            //printf("server buffer[i]=%d\n",buffer[i]);
+            //@wei
+            //buffer[i] is not equaled with 0x0a.it  specify the data didn't reach END.
+            while(buffer[i]!=0x0A)
+            {
+               i++;
+               len=recv(w->fd,&buffer[i],sizeof(unsigned int),0);
+               //printf("server buffer[i]=%d\n",buffer[i]);
+            }
+            if(buffer[0]==0x15)
+            {
+                temp=buffer[1];
+                switch(temp)
+                {
+                case 0x01:
+
+                        printf("COMMAND:-------TOPOINFO--------:\n");
+                        Server_GetZigBeeNwkTopo(w->fd);
+                        break;
+                case 0x02:
+
+                        printf("COMMAND:-------GetZigBeeNwkInfo--------:\n");
+                        Server_GetZigBeeNwkInfo(w->fd);
+                        break;
+                case 0x03:
+
+                        printf("CMOMAND:-------SET_SENSOR_STATUS:--------:\n");//
+                        Server_SetSensorStatus(w->fd,buffer[2],buffer[3]);
+                        break;
+                case 0x04:
+
+                        printf("COMMAND:-------GetRfidId--------:\n");
+                        Server_GetRfidId(w->fd);
+                        break;
+                case 0x05:
+
+                        printf("COMMAND:-------GetTempHum--------:\n");
+                        Server_GetTempHum(w->fd);
+                        break;
+                case 0x06:
+
+                        printf("COMMAND:-------SendGprsMessage--------:\n");//
+                        Server_SendGprsMessage(w->fd,&buffer[2],buffer[13]);
+                        break;
+                case 0x07:
+
+                        printf("COMMAND:-------get GPRSSignal--------:\n");
+                        Server_GetGPRSSignal(w->fd);
+                        break;
+                case 0x08:
+
+                        printf("COMMAND:-------clear intrupt--------:\n");
+                        gIntLock=0;
+                        break;
+                default:
+                        printf("error COMMAND\n");
+                        break;
+
+                }
+            }
+            else
+            {
+                printf("other protrol.\n");
+            }
+        }
+        else if(len ==0)
+        {
+            printf("remote socket closed!socket fd: %d\n",w->fd);
+            close(w->fd);
+            ev_io_stop(loop, w);
+            free(w);
+            return;
+        }
+        else
+        {
+                if(errno == EAGAIN ||errno == EWOULDBLOCK)
+                {
+                    printf("errno == EAGAIN ||errno == EWOULDBLOCK\n");
+                        //goto loop;
+                }
+                else
+                {
+                        printf("ret :%d ,close socket fd : %d\n",ret,w->fd);
+                        close(w->fd);
+                        ev_io_stop(loop, w);
+                        free(w);
+                        return;
+                }
+        }
+    }
+    else{
+        printf("not  server fd.\n");
+    }
+}
