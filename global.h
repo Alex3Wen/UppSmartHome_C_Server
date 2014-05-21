@@ -25,6 +25,21 @@ typedef unsigned short  uint16;
 typedef signed   long   int32;
 typedef unsigned long   uint32;
 
+//@by @wei
+//#define UPDBG   printf
+#define UPDBG(x...) 
+
+#define USER_DBG_EN
+#ifdef USER_DBG_EN
+#define Udbg(x...) {printf("\nkernel# fun: ");printf(x);printf("\n");}while(0)
+#define Udbgln(x...) {printf("kernel # ");printf(x);printf("\n");}while(0)
+#define Udbgv(v) {printf("kernel # ");printf(#v);printf("\t:%08x %d \n",v , v);}while(0)
+#define ULdbg() printf("line :%d fun:%s \n",__LINE__,__FUNCTION__)
+#else
+#define Udbg(x...) 
+#define Udbgv(x...) 
+#define ULdbg() 
+#endif
 
 #define BUFSIZE 256
 #define SOP_VALUE       0x02
@@ -55,6 +70,8 @@ typedef unsigned long   uint32;
 
 #define SPI_CMD_RPT_NODEOUT_REQ             0x0057
 #define SPI_CMD_RPT_NODEOUT_RSP             0x1057
+
+#define CMD_ALARM_ASYNC                     0x1058
 
 
 /* takes a byte out of a uint32 : var - uint32,  ByteNum - byte to take out (0 - 3) */

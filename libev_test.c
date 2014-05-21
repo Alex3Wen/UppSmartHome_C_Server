@@ -6,7 +6,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <pthread.h>
-#include <ev.h>
+#include <ev.h>     //from lib.
 
 #include <termios.h>
 #include <unistd.h>
@@ -20,7 +20,7 @@
 unsigned int topo_buffer[256*18+3];
 char phone_buf[11]={0};
 unsigned int sensor=0;
-int sockfd,qt_fd;
+int sockfd;
 struct timeval tv;
 fd_set sds;
 static int flag_bind=0;
@@ -51,7 +51,7 @@ void init_int_queue(PUINT_QUEUE pQ)
 void enqueue_int_queue(PUINT_QUEUE pQ, unsigned int c)
 {
     pthread_mutex_lock(&pQ->lock);
-    printf("________________enqueue_int_queue: %d\n",c);
+    UPDBG("________________enqueue_int_queue: %d\n",c);
     if((pQ->head + 1) % UINT_QUEUE_SIZE == pQ->tail) // queue full
     {
         pQ->tail = (pQ->tail + 1 ) % UINT_QUEUE_SIZE;
@@ -67,19 +67,20 @@ int main(int argc ,char** argv)
     ev_io ev_io_watcher;
 
 
-
-    printf("flag_bind%d",flag_bind);
+    argv[1]="7838";
+    argv[2]="9";
+    UPDBG("flag_bind%d",flag_bind);
     signal(SIGPIPE,SIG_IGN);
-    printf("start com monitor\n");  
+    UPDBG("start com monitor\n");  
     listen=socket_init(argv);
-    printf("flag_bind%d",flag_bind);
+    UPDBG("flag_bind%d",flag_bind);
     if(flag_bind)
     {
 
         ComPthreadMonitorStart();
 
     }
-     printf("kkk\n");
+     UPDBG("kkk\n");
 
     init_int_queue(&pQueue);
 
@@ -96,7 +97,7 @@ int main(int argc ,char** argv)
 
         }
 
-        printf("exit com monitor\n");
+        UPDBG("exit com monitor\n");
 
     return 0;
 
@@ -112,7 +113,7 @@ int socket_init(char** argv)
     
     if (argv[1])
     {
-        printf("argv1%s\n",argv[1]);
+        UPDBG("argv1%s\n",argv[1]);
         myport = atoi(argv[1]);
     }
     else
@@ -120,7 +121,7 @@ int socket_init(char** argv)
 
     if (argv[2])
     {   
-        printf("argv2%s\n",argv[2]);
+        UPDBG("argv2%s\n",argv[2]);
         lisnum = atoi(argv[2]);
     }
     else
@@ -140,9 +141,9 @@ int socket_init(char** argv)
     } 
     else
     {
-            printf("flag_bind=1\n");
+            UPDBG("flag_bind=1\n");
                 flag_bind=1;
-        printf("SOCKET CREATE SUCCESS!\n");
+        UPDBG("SOCKET CREATE SUCCESS!\n");
     }
     //setnonblocking(listener);
     int so_reuseaddr=1;
@@ -167,8 +168,8 @@ int socket_init(char** argv)
     } 
     else
     {
-        printf("BIND SUCCESS\n");
-        //printf("IP BIND SUCCESS,IP:%s\n",my_addr.sin_addr.s_addr);
+        UPDBG("BIND SUCCESS\n");
+        //UPDBG("IP BIND SUCCESS,IP:%s\n",my_addr.sin_addr.s_addr);
     }
 
     if (listen(listener, lisnum) == -1) 
@@ -179,7 +180,7 @@ int socket_init(char** argv)
 
     else
     {
-        printf("LISTEN SUCCESS,PORT:%d\n",myport);
+        UPDBG("LISTEN SUCCESS,PORT:%d\n",myport);
     }
     return listener;
 }
@@ -192,6 +193,7 @@ void accept_callback(struct ev_loop *loop, ev_io *w, int revents)
     struct sockaddr_in their_addr;
     socklen_t addrlen = sizeof(struct sockaddr);
     ev_io* accept_watcher=malloc(sizeof(ev_io));
+    ev_io* write_watcher = malloc(sizeof(ev_io));//@add by wei
 
     while ((newfd = accept(w->fd, (struct sockaddr *)&their_addr, &addrlen)) < 0)
     {
@@ -202,28 +204,32 @@ void accept_callback(struct ev_loop *loop, ev_io *w, int revents)
         }
         else
         {
-            printf("accept error.[%s]\n", strerror(errno));
+            UPDBG("accept error.[%s]\n", strerror(errno));
             break;
         }
     }
-    printf("Got connection from %s\n",inet_ntoa(their_addr.sin_addr));
-    if(!strcmp(inet_ntoa(their_addr.sin_addr),QT_CLIENT_ADDR)){
+    UPDBG("Got connection from %s\n",inet_ntoa(their_addr.sin_addr));
+    if(!(int)strcmp(inet_ntoa(their_addr.sin_addr),QT_CLIENT_ADDR)){
         qt_fd = w->fd;
-        Udbg("get fd %d\n",qt_fd);
+        Udbg("get fd from qt %d\n",qt_fd);
+    }else{
+        plat_other_fd = w->fd;
     }
 
-    //@wei If connection came from other expcept for qt client.
+    //@wei If connection came from others expcept for qt client.
     /*if(strcmp(their_addr.sin_addr,QT_CLIENT_ADDR))
     {
         ev_io_init(accept_watcher,android_callback,newfd,EV_READ);
         ev_io_start(loop,accept_watcher);
-        printf("android callback : fd :%d\n",accept_watcher->fd);
+        UPDBG("android callback : fd :%d\n",accept_watcher->fd);
     }else{*/
     ev_io_init(accept_watcher,recv_callback,newfd,EV_READ);
     //ev_io_start(loop,accept_watcher);
-    //ev_io_init(accept_watcher,write_callback,newfd,EV_WRITE);
     ev_io_start(loop,accept_watcher);
-    printf("accept callback : fd :%d\n",accept_watcher->fd);        
+
+    ev_io_init(write_watcher,write_callback,newfd,EV_WRITE);
+    ev_io_start(loop,write_watcher);
+    UPDBG("accept callback : fd :%d\n",accept_watcher->fd);        
     
 
 
@@ -250,7 +256,7 @@ void android_callback(struct ev_loop *loop, ev_io *w, int revents){
 
 void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
 {
-    printf("\nrecv_callback:\n");
+    //UPDBG("\nrecv_callback:\n");
     //@wei indentify of sending message successfully.
     if(gSend==1)
     {
@@ -265,7 +271,6 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
         write(w->fd, (unsigned int*)(&buffer), sizeof(buffer));
 
     }
-    printf("Line :%d\n",__LINE__);
     unsigned int buffer[15]={0};
     unsigned int temp;
     int i=0,j;
@@ -278,87 +283,87 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
     int ret = select((1+w->fd), &sds, NULL, NULL, &tv);
     if(ret >0)
     {
-        printf("server select wait...\n");
+        UPDBG("server select wait...\n");
         if (FD_ISSET(w->fd, &sds))
         {
-            printf("server FD_ISSET...\n");
+            UPDBG("server FD_ISSET...\n");
             int len=0;
             len=recv(w->fd,&buffer[i],sizeof(unsigned int),0);
             if(len>0)
             {
-                printf("len :%d && server buffer[i]=%d\n",len,buffer[i]);
+                //UPDBG("len :%d && server buffer[i]=%d\n",len,buffer[i],i);
             //@wei
             //buffer[i] is not equaled with 0x0a.it  specify the data didn't reach END.
-            //while(buffer[i]!=0x0a)//original
-            while(buffer[len-2]!=0x0A)
+            while(buffer[i]!=0x0a)//original
+            //while(buffer[len-2]!=0x0A)
             {
                i++ ;//
                len=recv(w->fd,&buffer[i],sizeof(unsigned int),0);
-               printf("len :%d && server buffer[i]=%d\n",len,buffer[i]);
+               //UPDBG("len :%d && server buffer[i]=%d i = %d\n",len,buffer[i],i);
             }
             if(buffer[0]==0x15)
             {
-                printf("temp: %d\n",buffer[1]);
+                //UPDBG("temp: %d\n",buffer[1]);
                 temp=buffer[1];
                 switch(temp)
                 {
                 case 0x01:
 
-                        printf("COMMAND:-------TOPOINFO--------:\n");
+                        UPDBG("COMMAND:-------TOPOINFO--------:\n");
                         Server_GetZigBeeNwkTopo(w->fd);
                         break;
                 case 0x02:
 
-                        printf("COMMAND:-------GetZigBeeNwkInfo--------:\n");
+                        //UPDBG("COMMAND:-------GetZigBeeNwkInfo--------:\n");
                         Server_GetZigBeeNwkInfo(w->fd);
                         break;
                 case 0x03:
 
-                        printf("CMOMAND:-------SET_SENSOR_STATUS:--------:\n");//
+                        UPDBG("CMOMAND:-------SET_SENSOR_STATUS:--------:\n");//
                         Server_SetSensorStatus(w->fd,buffer[2],buffer[3]);
                         break;
                 case 0x04:
 
-                        printf("COMMAND:-------GetRfidId--------:\n");
+                        UPDBG("COMMAND:-------GetRfidId--------:\n");
                         Server_GetRfidId(w->fd);
                         break;
                 case 0x05:
 
-                        printf("COMMAND:-------GetTempHum--------:\n");
+                        UPDBG("COMMAND:-------GetTempHum--------:\n");
                         Server_GetTempHum(w->fd);
                         break;
                 case 0x06:
 
-                        printf("COMMAND:-------SendGprsMessage--------:\n");//
+                        UPDBG("COMMAND:-------SendGprsMessage--------:\n");//
                         Server_SendGprsMessage(w->fd,&buffer[2],buffer[13]);
                         break;
                 case 0x07:
 
-                        printf("COMMAND:-------get GPRSSignal--------:\n");
+                        UPDBG("COMMAND:-------get GPRSSignal--------:\n");
                         Server_GetGPRSSignal(w->fd);
                         break;
                 case 0x08:
 
-                        printf("COMMAND:-------clear intrupt--------:\n");
+                        Udbg("COMMAND:-------clear intrupt--------:\n");
                         gIntLock=0;
                         break;
                 case 0x09:
                         Udbg("Command : get real time picture\n");
                         ClientGetRealPic(w->fd);
                 default:
-                        printf("error COMMAND\n");
+                        UPDBG("error COMMAND\n");
                         break;
 
                 }
             }
             else
             {
-                printf("other protrol.\n");
+                UPDBG("other protrol.\n");
             }
         }
             else if(len ==0)
             {
-                    printf("remote socket closed!socket fd: %d\n",w->fd);
+                    UPDBG("remote socket closed!socket fd: %d\n",w->fd);
                     close(w->fd);
                     ev_io_stop(loop, w);
                     free(w);
@@ -368,12 +373,12 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
             {
                     if(errno == EAGAIN ||errno == EWOULDBLOCK)
                     {
-                        printf("errno == EAGAIN ||errno == EWOULDBLOCK\n");
+                        UPDBG("errno == EAGAIN ||errno == EWOULDBLOCK\n");
                             //goto loop;
                     }
                     else
                     {
-                            printf("ret :%d ,close socket fd : %d\n",ret,w->fd);
+                            UPDBG("ret :%d ,close socket fd : %d\n",ret,w->fd);
                             close(w->fd);
                             ev_io_stop(loop, w);
                             free(w);
@@ -382,15 +387,15 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
             }
         }
         else{
-                           printf("not  server fd.\n");
+                           UPDBG("not  server fd.\n");
                 }
     }
     else if(ret == 0){
-            printf("server read wait timeout!!!\n");
+            UPDBG("server read wait timeout!!!\n");
 
     }
     else{// ret <0
-            printf("server select error.\n");
+            UPDBG("server select error.\n");
             //perror(ret);
     }
 
@@ -404,12 +409,13 @@ void write_callback(struct ev_loop *loop, ev_io *w, int revents)
 
 
     int fd=w->fd;
+
     ev_io_stop(loop,  w);
 
 }
 
 bool Server_GetZigBeeNwkInfo(int fd){
-    printf("Server:___________GetZigBeeNwkInfo\n");
+    UPDBG("Server:___________GetZigBeeNwkInfo\n");
 /*int bufer [9]
     0x26 0x02 panid chnnal  maxchild  maxdepth  maxrouter
     */
@@ -420,13 +426,13 @@ bool Server_GetZigBeeNwkInfo(int fd){
         buffer[8]='\n';
 
         struct NwkDesp *pNwkDesp2;
-        //bool netinfo
-        pNwkDesp2 =GetZigBeeNwkDesp();
+        //bool netinfo   @wei update by server.
+        //pNwkDesp2 =GetZigBeeNwkDesp();
         buffer[2]=pNwkDesp2->panid;
         buffer[3]=pNwkDesp2->channel;
 
         buffer[4]=pNwkDesp2->channel>>16;
-        printf("pNwkDesp2->channel=%ld %d %d %ld\n",pNwkDesp2->channel,pNwkDesp2->channel>>16,pNwkDesp2->channel,pNwkDesp2->channel>>16+pNwkDesp2->channel);
+        //UPDBG("pNwkDesp2->channel=%ld %d %d %ld\n",pNwkDesp2->channel,pNwkDesp2->channel>>16,pNwkDesp2->channel,pNwkDesp2->channel>>16+pNwkDesp2->channel);
         buffer[5]=pNwkDesp2->maxchild;
         buffer[6]=pNwkDesp2->maxdepth;
         buffer[7]=pNwkDesp2->maxrouter;
@@ -446,76 +452,78 @@ bool Server_GetZigBeeNwkInfo(int fd){
 
 bool Server_SetSensorStatus(int fd,unsigned int addr,unsigned int state)
 {
+    Udbg(" SetSensorStatus addr  = %08x ,state = %08x",addr,state);
     SetSensorStatus(addr,state);
-    printf("Server:Server_SetSensorStatus end");
+    UPDBG("Server:Server_SetSensorStatus end");
     return TRUE;
 
 }
 
-
-
 bool Server_GetZigBeeNwkTopo(int fd){
     struct NodeInfo* pNodeNwkTopoInfo ,*q;
+    //modify by wei 
+    pNodeNwkTopoInfo = GetZigBeeNwkTopoHead();//pNodeNwkTopoInfo=GetZigBeeNwkTopo();
 
-    pNodeNwkTopoInfo=GetZigBeeNwkTopo();
-
-    printf("gNwkStatusFlag=%d\n",gNwkStatusFlag);
+    //UPDBG("gNwkStatusFlag=%d\n",gNwkStatusFlag);
     topo_buffer[0]=0x26;
     topo_buffer[1]=0x01;
     if(gNwkStatusFlag)
     {
+        UPDBG("fun :%s get alarm LINE :%d  \n",__FUNCTION__,__LINE__);
         if(pNodeNwkTopoInfo==NULL)
         {
             topo_buffer[2]=0x02;//for online,but NULL
             topo_buffer[3]=0x0A;
+        UPDBG("fun :%s get alarm LINE :%d  \n",__FUNCTION__,__LINE__);
             write(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*4);
         }
         else{
+        UPDBG("fun :%s get alarm LINE :%d  \n",__FUNCTION__,__LINE__);
             int i=0,j=0;
             while(pNodeNwkTopoInfo!=NULL)
             {
                topo_buffer[2+18*i]=pNodeNwkTopoInfo->devinfo->nwkaddr;
-               printf("cliect topo_buffer[%d]=%d\n",2+18*i,topo_buffer[2+18*i]);
+               UPDBG("cliect topo_buffer[%d]=%d\n",2+18*i,topo_buffer[2+18*i]);
                topo_buffer[3+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[0];
-               //printf("cliect topo_buffer[%d]=%d\n",3+18*i,topo_buffer[3+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",3+18*i,topo_buffer[3+18*i]);
                topo_buffer[4+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[1];
-               //printf("cliect topo_buffer[%d]=%d\n",4+18*i,topo_buffer[4+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",4+18*i,topo_buffer[4+18*i]);
                topo_buffer[5+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[2];
-               //printf("cliect topo_buffer[%d]=%d\n",5+18*i,topo_buffer[5+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",5+18*i,topo_buffer[5+18*i]);
                topo_buffer[6+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[3];
-               //printf("cliect topo_buffer[%d]=%d\n",6+18*i,topo_buffer[6+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",6+18*i,topo_buffer[6+18*i]);
                topo_buffer[7+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[4];
-               //printf("cliect topo_buffer[%d]=%d\n",7+18*i,topo_buffer[7+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",7+18*i,topo_buffer[7+18*i]);
                topo_buffer[8+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[5];
-               //printf("cliect topo_buffer[%d]=%d\n",8+18*i,topo_buffer[8+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",8+18*i,topo_buffer[8+18*i]);
                topo_buffer[9+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[6];
-               //printf("cliect topo_buffer[%d]=%d\n",9+18*i,topo_buffer[9+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",9+18*i,topo_buffer[9+18*i]);
                topo_buffer[10+18*i]=pNodeNwkTopoInfo->devinfo->macaddr[7];
-               //printf("cliect topo_buffer[%d]=%d\n",10+18*i,topo_buffer[10+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",10+18*i,topo_buffer[10+18*i]);
                topo_buffer[11+18*i]=pNodeNwkTopoInfo->devinfo->depth;
-               //printf("cliect topo_buffer[%d]=%d\n",11+18*i,topo_buffer[11+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",11+18*i,topo_buffer[11+18*i]);
                topo_buffer[12+18*i]=pNodeNwkTopoInfo->devinfo->devtype;
-               //printf("cliect topo_buffer[%d]=%d\n",12+18*i,topo_buffer[12+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",12+18*i,topo_buffer[12+18*i]);
                topo_buffer[13+18*i]=pNodeNwkTopoInfo->devinfo->parentnwkaddr;
-               //printf("cliect topo_buffer[%d]=%d\n",13+18*i,topo_buffer[13+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",13+18*i,topo_buffer[13+18*i]);
                topo_buffer[14+18*i]=pNodeNwkTopoInfo->devinfo->sensortype;
-               //printf("cliect topo_buffer[%d]=%d\n",14+18*i,topo_buffer[14+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",14+18*i,topo_buffer[14+18*i]);
                topo_buffer[15+18*i]=pNodeNwkTopoInfo->devinfo->sensorvalue;
-               //printf("cliect topo_buffer[%d]=%d\n",15+18*i,topo_buffer[15+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",15+18*i,topo_buffer[15+18*i]);
                topo_buffer[16+18*i]=pNodeNwkTopoInfo->devinfo->sensorvalue>>16;
-               //printf("cliect topo_buffer[%d]=%d\n",16+18*i,topo_buffer[16+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",16+18*i,topo_buffer[16+18*i]);
                topo_buffer[17+18*i]=pNodeNwkTopoInfo->devinfo->status;
-               printf("cliect topo_buffer[%d]=%d\n",17+18*i,topo_buffer[17+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",17+18*i,topo_buffer[17+18*i]);
                topo_buffer[18+18*i]=pNodeNwkTopoInfo->row;
-               //printf("cliect topo_buffer[%d]=%d\n",18+18*i,topo_buffer[18+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",18+18*i,topo_buffer[18+18*i]);
                topo_buffer[19+18*i]=pNodeNwkTopoInfo->num;
-               //printf("cliect topo_buffer[%d]=%d\n",19+18*i,topo_buffer[19+18*i]);
+               //UPDBG("cliect topo_buffer[%d]=%d\n",19+18*i,topo_buffer[19+18*i]);
                pNodeNwkTopoInfo=pNodeNwkTopoInfo->next;
                j=i;
                i++;
             }
             topo_buffer[20+18*j]='\n';
-            //printf("cliect topo_buffer[%d]=%d\n",20+18*j,topo_buffer[20+18*j]);
+            //UPDBG("cliect topo_buffer[%d]=%d\n",20+18*j,topo_buffer[20+18*j]);
             write(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*(20+18*j+1));
         }
     }
@@ -530,7 +538,7 @@ bool Server_GetZigBeeNwkTopo(int fd){
     return TRUE;
 }
 bool Server_GetTempHum(int fd){
-    printf("Server:___________GetTempHum\n");
+    UPDBG("Server:___________GetTempHum\n");
 
         unsigned int buffer[5]={0};
         buffer[0]=0x26;
@@ -553,7 +561,7 @@ bool Server_GetTempHum(int fd){
         return TRUE;
 }
 int Server_GetRfidId(int fd){
-    printf("Server:___________GetRfidId\n");
+    UPDBG("Server:___________GetRfidId\n");
 
     unsigned int buffer[5]={0};
     buffer[0]=0x26;
@@ -577,7 +585,7 @@ int Server_GetRfidId(int fd){
 
 }
 int Server_GetGPRSSignal(int fd){
-    printf("Server:___________GetGPRSSignal\n");
+    UPDBG("Server:___________GetGPRSSignal\n");
     unsigned int buffer[4]={0};
     buffer[0]=0x26;
     buffer[1]=0x07;
@@ -597,25 +605,15 @@ int Server_GetGPRSSignal(int fd){
     return 1;
 }
 bool Server_SendGprsMessage(int fd,unsigned int *phone,unsigned int sensor){
-    //printf("@@@@@@@@@@@@@@@@@@@@@Server:___________SendGprsMessage@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n");
-
-
+    //UPDBG("@@@@@@@@@@@@@@@@@@@@@Server:___________SendGprsMessage@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n");
     int i=0;
-
     for(i=0;i<11;i++)
     {
     phone_buf[i]=*(phone+i);
-    printf("%c",*(phone+i));
-
+    UPDBG("%c",*(phone+i));
     }
-
     //gprs_msg(phone_buf,sensor);
     enqueue_int_queue(&pQueue,sensor);
-
-
-
-
-
     return TRUE;
 }
 void gprs_send()

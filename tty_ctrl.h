@@ -63,6 +63,10 @@ extern unsigned long int GetRFIDData(void);
 
 extern int ComPthreadMonitorStart(void);
 extern int ComPthreadMonitorExit(void);
+
+//bywei
+extern NodeInfo *GetZigBeeNwkTopoHead(void);
+int plat_other_fd,qt_fd;
 #define UINT_QUEUE_SIZE (6)
 typedef struct
 {
