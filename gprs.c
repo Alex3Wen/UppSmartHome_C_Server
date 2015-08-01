@@ -144,7 +144,7 @@ void gprs_wmsg(void * data)
             tty_writecmd(gprs_fd, "AT+CMGF=1", strlen("AT+CMGF=1"));		//发送修改字符集命令
             tty_write(gprs_fd, "AT+CMGS=", strlen("AT+CMGS="));	//发送发短信命令，具体格式见手册
             tty_write(gprs_fd, "\"", strlen("\""));
-            tty_write(gprs_fd, &phone_buf, 11);
+            //ty_write(gprs_fd, &phone_buf, 11);  @delete by wei 
             tty_write(gprs_fd, "\"", strlen("\""));
             tty_write(gprs_fd, ";\r", strlen(";\r"));
 

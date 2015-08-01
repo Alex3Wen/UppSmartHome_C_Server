@@ -2,11 +2,16 @@
 #include "global.h"
 #include "zigbee_ctrl.h"
 #include "gprs.h"
+#include "RFID_handler.h"
+
+#include "list.h"
+#include "fd_list.h"
 
 pthread_mutex_t mutex;
+pthread_mutex_t mutex_trans;
 
 volatile int STOP=FALSE;
-
+volatile int SEND_PAUSE = FALSE;
 int zb_fd;
 int bt_fd;
 int rf_fd;
@@ -27,7 +32,7 @@ unsigned char gNwkStatusFlag;
 unsigned char gFrameValidFlag;
 unsigned char gCmdValidFlag;
 unsigned char gIntLock;
-
+unsigned char gRegister_ready;
 NwkDesp gNwkDesp;
 DeviceInfo gDeviceInfo;
 SensorDesp gSensorDesp;
@@ -263,7 +268,7 @@ void CMD_SetSensorStatus(unsigned int nwkaddr, unsigned  int status)
 	txbuff[4]=addr[0];// nwkaddr H
 	txbuff[5]=addr[1];// nwkaddr L
 	txbuff[6]= status;
-	printf("txbuf 5 is %02x",txbuff[6]);
+	printf("txbuf 5 is %02x\n",txbuff[6]);
 
 	txbuff[7]=Data_CalcFCS(txbuff+1, (unsigned char)6);// FCS
         //UPDBG("\ncmd set sensor status\n");//by gxj
@@ -362,6 +367,15 @@ void CMD_GETZigebeePins(void)
 	pthread_mutex_unlock(&mutex);
 }
 
+void CMD_ZIGBEE_RESTART(void)
+{
+	pthread_mutex_lock(&mutex);	
+	unsigned char txbuff[6]={0x02,0,0x05,0x01,0x0,0x04};
+	tty_write(zb_fd,txbuff,6);
+	Udbg("restart zigbee coodrator\n");
+	pthread_mutex_unlock(&mutex);
+}
+/*end add*/
 void ProcessNwkConnectRSP( unsigned char  *_pData , unsigned char _len)
 {
 	UPDBG("cmd:nwk connect rsp\n");
@@ -431,7 +445,7 @@ void ProcessGetNwkTopoRSP( unsigned char  *_pData , unsigned char _len  )
 	parentnwkaddr = BUILD_UINT16(_pData[17], _pData[16]);
 	sensortype = _pData[18];
 	sensorvalue = BUILD_UINT32(_pData[22], _pData[21], _pData[20], _pData[19]);	
-
+	//printf("devtype is %02x\n",sensortype);
 	gDeviceInfo.nwkaddr = nwkaddr;
 	for(i=0; i<8; i++){
 		gDeviceInfo.macaddr[i] = macaddr[i];
@@ -443,9 +457,8 @@ void ProcessGetNwkTopoRSP( unsigned char  *_pData , unsigned char _len  )
 	gDeviceInfo.sensorvalue = sensorvalue;
 	gDeviceInfo.status = 0x01;// node status  ffffffff9f06bb1a
 	
-        Udbg("gDeviceInfo.nwkaddr=0x%x\n", gDeviceInfo.nwkaddr);
-
-        UPDBG("gDeviceInfo.macaddr=0x");//by gxj
+    Udbgln("gDeviceInfo.nwkaddr=0x%x", gDeviceInfo.nwkaddr);
+    UPDBG("gDeviceInfo.macaddr=0x");//by gxj
 	for(i=0; i<8; i++){
 		UPDBG("%lx ", gDeviceInfo.macaddr[i]);
 	}
@@ -454,13 +467,13 @@ void ProcessGetNwkTopoRSP( unsigned char  *_pData , unsigned char _len  )
 	UPDBG("gDeviceInfo.depth=0x%lx\n", gDeviceInfo.depth);
 	UPDBG("gDeviceInfo.devtype=0x%x\n", gDeviceInfo.devtype);
 	UPDBG("gDeviceInfo.parentnwkaddr=0x%x\n", gDeviceInfo.parentnwkaddr);
-	UPDBG("gDeviceInfo.sensortype=0x%x\n", gDeviceInfo.sensortype);
-	Udbg("gDeviceInfo.sensorvalue0x%x\n", gDeviceInfo.sensorvalue);
-        UPDBG("gDeviceInfo.status=0x%x\n", gDeviceInfo.status);//by gxj
+	Udbg("gDeviceInfo.sensortype=0x%x\n", gDeviceInfo.sensortype);
+	Udbgln("gDeviceInfo.sensorvalue0x%x", gDeviceInfo.sensorvalue);
+    UPDBG("gDeviceInfo.status=0x%x", gDeviceInfo.status);//by gxj
 
 	pNodeInfo p = DeviceNodeSearch(nwkaddr);
 	if(NULL != p){// exist node nwkaddr
-		UPDBG("nwkaddr :%x exist update info.\n",nwkaddr);
+		Udbg("nwkaddr :%x exist update info.\n",nwkaddr);
 		//p->devinfo = &gDeviceInfo;// update datas
 		{
 			p->devinfo->nwkaddr = gDeviceInfo.nwkaddr;
@@ -476,6 +489,10 @@ void ProcessGetNwkTopoRSP( unsigned char  *_pData , unsigned char _len  )
 	public final static String[] DEVTYPESTR 	= {"无","蓝色","green"};
 	public final static String[] SENSORTYPESTR 	= {"温湿度","人体红外","可然气体","引脚信息"};
 	public final static String[] SENSORSTATUS 	= {"正常","警告"};*/
+			if((p->devinfo->sensortype) ==0x07){
+				rf_nwk = gDeviceInfo.nwkaddr;
+				//goto IGNORE_RFID_UPDATE;
+			}
 			if((p->devinfo->sensortype) !=0 &&(gIntLock==0)){
 				p->devinfo->sensorvalue = gDeviceInfo.sensorvalue;
 			}
@@ -487,12 +504,16 @@ void ProcessGetNwkTopoRSP( unsigned char  *_pData , unsigned char _len  )
 				UPDBG("get int \n");
 				//sleep(5);	
 			}
+IGNORE_RFID_UPDATE:
 			p->devinfo->status = gDeviceInfo.status;// recover status		
 		}
 	}
 	else if(NULL == p){// new node nwkaddr
                 //UPDBG("new nwkaddr:%x make node.\n",nwkaddr);//by gxj
 		pNodeInfo pp = DeviceNodeCreate(&gDeviceInfo);
+		if((pp->devinfo->sensortype) ==0x07){
+			pp->devinfo->sensorvalue = 0;
+		}
 		DeviceNodeAdd(pp);		
 	}
 
@@ -509,40 +530,119 @@ void ProcesssSetSensorModeRSP( unsigned char  *_pData , unsigned char _len )
 *@wei
 *the function called when message been sent from zigbee asynchronously.
 */
+
+void debug_fun(unsigned char type,unsigned int value){
+	int ret;
+	Udbg("fun :%s get alarm \n",__FUNCTION__);
+	Udbgv(value);
+	gRegister_ready = 1;
+	if(gRegister_ready){
+		Udbgv(value);
+		register_ID(value);
+		gRegister_ready = 0;
+	}else{
+		//The state is registering ether verifying.
+		ret = RFID_verify(value);
+		Udbgv(ret);
+	}	
+}
+
 void ProcessGetSensorStatusRSP( unsigned char  *_pData , unsigned char _len )
 {	
     UPDBG("cmd:get sensor status rsp\n");//by gxj
 	unsigned int nwkaddr;
 	unsigned char type;
 	unsigned long int value;
-
-	pthread_mutex_lock(&mutex);	
-
+	int ret,index,err;
+	pthread_mutex_lock(&mutex_trans);	
+	//SEND_PAUSE = true;
 	gIntLock = 0x01;
 	nwkaddr = BUILD_UINT16(_pData[5], _pData[4]);
 	type = _pData[6];
 	value = BUILD_UINT32(_pData[10], _pData[9], _pData[8], _pData[7]);
 
 	pNodeInfo p = DeviceNodeSearch(nwkaddr);
-
+	//debug_fun(type,value);
 	if(NULL != p){// exist node nwkaddr
-                //UPDBG("nwkaddr :%x is interrupt.\n",nwkaddr);//by gxj
-		//p->devinfo->sensortype;
+        //UPDBG("nwkaddr :%x is interrupt.\n",nwkaddr);//by gxj
 		p->devinfo->sensorvalue = value;
-		UPDBG("fun :%s get alarm \n",__FUNCTION__);
+		Udbg("fun :%s get alarm \n",__FUNCTION__);
 		//@wei Update nwk info before tty data come in next time.
 		//Actually,only the some sinsor need to update android client;
-		if(plat_other_fd > 0)
-			Server_GetZigBeeNwkTopo(plat_other_fd);
-		if(qt_fd > 0)
-			Server_GetZigBeeNwkTopo(plat_other_fd);
-			//UPDBG("error plat_other_fd \n");
+		if(type == 0x07){
+			//return;}else{//type == 0x07
+//@wei below code is for RFIDcard system.
+//server try to handle all RFID message for all clients.should handle in recv thread.  注意gintlock  需要客户端清除中断才能下一次更新
+			if(gRegister_ready && value!=0){
+				//register ready. register to server,
+				//judge the id has regiestered .
+				Udbgv(value);
+				ret = register_ID(value);
+				gRegister_ready = 0;
+				//to client (with the registered ID)
+				if(ret < 0){
+					Udbg("register fail\n");
+				}else{
+					p->devinfo->sensorvalue = value;
+					if(registering_fd > 0){
+						Server_GetZigBeeNwkTopo(registering_fd);
+						Udbg("register successfully\n");
+					}
+				}
+			}else{
+				//The state is registering ether verifying. just verfying dont tell clinet.
+				ret = RFID_verify(value);
+				Udbgv(value);
+				if(ret){
+					Udbg("verify successfully.ready to open door  && rf_nwk : %08x\n",rf_nwk);
+					p->devinfo->sensorvalue = value;///Open the door and tell to clients.		
+					CMD_SetSensorStatus(rf_nwk,1);//in test dont need to tell clients.
+					//Server_ErrorFeedback()
+				}else{
+					p->devinfo->sensorvalue = 0x1;//warning!
+					Udbgln("THE ID IS NOT REGISTERED!");
+					CMD_SetSensorStatus(rf_nwk,0);//alarm
+					err = ERROR_ID_NOT_EXIST;
+				}	
+			}
+			gIntLock = 0;//clear auto 
+		}
+
+        reg_fd_list_t *entry;
+        bool ret_b;
+        list_for_each(iterator,&head)//遍历  
+       {
+            entry = list_entry(iterator,struct reg_fd_list,node);//读取某个值  
+            Udbgv(ret);
+            //printf("socketfd :%d\n",entry->socketfd);
+            if((entry->socketfd > 0)){// && (entry->socketfd!=qt_socket_fd))
+		        if(!ret){
+	            	Udbgln("feedback!!!!!!");
+	            	Server_ErrorFeedback(entry->socketfd,err);
+
+	            }
+	            ret_b = Server_GetZigBeeNwkTopo(entry->socketfd);
+	            if(ret_b==FALSE)
+	            	break;
+	        }
+        }
+        ULdbg();
+		if(qt_socket_fd > 0){
+			Server_GetZigBeeNwkTopo(qt_socket_fd);
+			if(ret){
+	            Server_ErrorFeedback(qt_socket_fd,0);
+	        }else{
+				Server_ErrorFeedback(qt_socket_fd,err);
+	        }
+		}
+		//UPDBG("error plat_other_fd \n");
+		p->devinfo->sensorvalue = 0;
 	}
 	else if(NULL == p){// new node nwkaddr
-		UPDBG("new nwkaddr:%x is not find.\n",nwkaddr);	
+		Udbg("new nwkaddr:%x is not find.\n",nwkaddr);
 	}
 	
-	pthread_mutex_unlock(&mutex);	
+	pthread_mutex_unlock(&mutex_trans);	
 
 	return;	
 }
@@ -550,6 +650,39 @@ void ProcessGetSensorStatusRSP( unsigned char  *_pData , unsigned char _len )
 void ProcessSetSensorStatusRSP( unsigned char  *_pData , unsigned char _len )
 {
 	UPDBG("cmd:set sensor status rsp\n");
+		printf("cmd:set sensor status rsp\n");
+	unsigned int nwkaddr;
+	unsigned char type;
+	unsigned char value;
+
+	pthread_mutex_lock(&mutex);	
+	/*======_pData=0x02,0x10,0x55,0x04,0x00,0x01,0x05,0x0c*/
+
+	printf("======_pData=%0x,%0x,%0x,%0x,%0x,%0x,%0x,%0x\n",
+		_pData[0],_pData[1],_pData[2],_pData[3],_pData[4],_pData[5],_pData[6],_pData[7] );
+	gIntLock = 0x01;
+
+	nwkaddr = BUILD_UINT16(_pData[5], _pData[4]);
+	printf("====================nwkaddr=%0x\n",nwkaddr );
+	type = _pData[6];
+	printf("====================type=%0x\n",type );
+	value = _pData[7];
+	printf("====================value=%0x\n",value );
+	
+	pNodeInfo p = DeviceNodeSearch(nwkaddr);
+
+	if(NULL != p && p->devinfo->sensortype == 0x05){// exist node nwkaddr
+                //printf("nwkaddr :%x is interrupt.\n",nwkaddr);//by gxj
+		//p->devinfo->sensortype;
+		p->devinfo->sensorvalue = value;
+	}
+	else if(NULL == p){// new node nwkaddr
+		printf("new nwkaddr:%x is not find.\n",nwkaddr);	
+	}
+	
+	pthread_mutex_unlock(&mutex);	
+
+
 }
 
 void ProcessGetDevInfoRSP( unsigned char  *_pData , unsigned char _len )
@@ -632,19 +765,22 @@ void ProcessGetDevInfoRSP( unsigned char  *_pData , unsigned char _len )
 		DeviceNodeAdd(p);		
 	}
 
-        UPDBG("node num:%x\n",DeviceNodeNum(NodeInfoHead));//by gxj
+        Udbg("node num:%x\n",DeviceNodeNum(NodeInfoHead));//by gxj
 
 	pthread_mutex_unlock(&mutex);		
 }
 
 void	ProcessRptNodeOutRSP( unsigned char  *_pData , unsigned char _len )
 {
-	UPDBG("cmd:rpt node out rsp\n");
+	Udbg("cmd:rpt node out rsp\n");
 	int i;
+	static int count ;
 	unsigned int  nwkaddr;
-
+	//CMD_ZIGBEE_RESTART();
+	//notice to deadlock
 	pthread_mutex_lock(&mutex);
 
+	
 	nwkaddr = BUILD_UINT16(_pData[5], _pData[4]);
 
 	pNodeInfo p = DeviceNodeSearch(nwkaddr);
@@ -691,7 +827,9 @@ int SetSensorWorkMode(/*unsigned int nwkaddr,*/unsigned char Mode)
 
 int SetSensorStatus(unsigned int nwkaddr, unsigned  int status)
 {
+	pthread_mutex_lock(&mutex_trans); // by @wei
 	CMD_SetSensorStatus(nwkaddr, status);
+	pthread_mutex_unlock(&mutex_trans); // by @wei
 	return 0;
 }
 
@@ -963,7 +1101,7 @@ void* ComRevPthread(void * data)
   /*************--cmd frame format--****************/
   //
    /***  | sop | cmd | len | data | fcs |  ***/
-   /***  |  2  |  2  |  1  | len  |  1  |  ***/
+   /***  |  1  |  2  |  1  | len  |  1  |  ***/
                     if(buff[0]==0x02){//0x0002 
 
                         i=0;
@@ -1003,7 +1141,8 @@ void* ComRevPthread(void * data)
 
                                 databuf[datalen+1+2+1]= Data_CalcFCS(databuf+1, datalen+3);
                                 ///UPDBG("cCalcFcs:%x\n",databuf[datalen+1+2+1]);
-                                if(databuf[datalen+1+2+1]==buff[0]){
+                                //unsigned char NOFCS = 1;
+                                if(databuf[datalen+1+2+1]==buff[0]){//||NOFCS == 1){
                                     ///UPDBG("CalcFcs OK\n");
                                       gFrameValidFlag = 0x01;
                                       gNwkStatusFlag = 0x01;// recover the coord's status.
@@ -1035,9 +1174,13 @@ void* ComRevPthread(void * data)
         }
         else if(ret == 0){
         		//UPDBG("USER # LINE :991 time second :%d \n",tv.tv_sec);
-                UPDBG("zb read wait timeout!!!\n");
+        	    //if no 
+        		static int count;
+        		//CMD_ZIGBEE_RESTART();
+                Udbg("zb read wait timeout!!!\n");
                 gNwkStatusFlag = 0x00;
-                DeviceNodeDestory();
+                DeviceNodeDestory();  //by @wei command for test
+
         }
         else{// ret <0
                 UPDBG("zb select error.\n");
@@ -1060,251 +1203,22 @@ void* ComSendPthread(void * data)
         while (STOP==FALSE)
         {
            	//CMD_NwkDetect();
+           	//while(SEND_PAUSE)
+           	//	usleep(500);
+        	pthread_mutex_lock(&mutex_trans); // by @wei
+        	//usleep(500000);
            	CMD_GetZigBeeNwkTopo();
-           	UPDBG("h\n");
-        sleep(2);
+           	//usleep(500000);
+           	Udbg("h\n");
+           	pthread_mutex_unlock(&mutex_trans);
+        	sleep(2);
                //usleep(600000);
 		//usleep(600000);
-		//usleep(600000);
-               //usleep(600000);
-		//usleep(600000);
-		//usleep(600000);
-               //usleep(600000);
 	
         }
 
         return NULL; /* wait for child to die or it will become a zombie */
 }
-
-void* BlueToothRevPthread(void * data)
-{
-    UPDBG("bluetooth rev pthread.\n");
-
-    struct timeval tv;
-    fd_set rfds;
-
-    tv.tv_sec=15;
-    tv.tv_usec=0;
-
-    int nread;
-    int i,j,ret,datalen;
-
-    unsigned char buff[BUFSIZE]={0,};
-    unsigned char databuf[BUFSIZE]={0,};
-    ret = 0;
-		
-	//pthread_detach(pthread_self());
-        while (STOP==FALSE)
-        {
-                //UPDBG("bt phread wait...\n");//by gxj
-		
-	        tv.tv_sec=10;
-	        tv.tv_usec=0;
-			
-	        FD_ZERO(&rfds);
-	        FD_SET(bt_fd, &rfds);
-		ret = select(1+bt_fd, &rfds, NULL, NULL, &tv);
-
-	        if(ret >0)
-	        {
-                    UPDBG("bt select wait...\n");//by gxj
-	            if (FD_ISSET(bt_fd, &rfds))
-	            {
-	                gBTStatusFlag = 0x01;// any data of uart can flag it's status.
-	                nread=tty_read(bt_fd,buff, 1);
-                        //UPDBG("readlen=%d\n", nread);//by gxj
-	                buff[nread]='\0';
-                        //UPDBG("0x%x\n",buff[0]);//by gxj
-
-//#if 0
-	                    if(buff[0]==0xBB){
-		                nread=tty_read(bt_fd,buff, 1);
-                                //UPDBG("readlen=%d\n", nread);
-		                buff[nread]='\0';
-                                //UPDBG("0x%x\n",buff[0]);
-	   	                if(buff[0]==0xFF){
-	   		                nread=tty_read(bt_fd,buff, 1);
-                                        //UPDBG("readlen=%d\n", nread);
-	   		                buff[nread]='\0';
-                                        //UPDBG("0x%x\n",buff[0]);
-	   	                	 if(buff[0]==0x06){
-		   		                nread=tty_read(bt_fd,buff, 1);
-                                                //UPDBG("readlen=%d\n", nread);
-		   		                buff[nread]='\0';
-                                                //UPDBG("0x%x\n",buff[0]);
-	   	                	 	 if(buff[0]==0x00){
-			   		                nread=tty_read(bt_fd,buff, 1);
-                                                        //UPDBG("readlen=%d\n", nread);
-			   		                buff[nread]='\0';
-                                                        //UPDBG("0x%x\n",buff[0]);
-	   	                	 	 	 if(buff[0]==0x03){
-				   		                nread=tty_read(bt_fd,databuf, 4);
-                                                                //UPDBG("read bt datalen=%d\n", nread);
-				   		                buff[nread]='\0';
-                                                                 /*UPDBG("\n---BLUETH DATA:");
-                                                                UPDBG("0x%x",databuf[0]);
-                                                                UPDBG("\t0x%x",databuf[1]);
-                                                                UPDBG("\t0x%x",databuf[2]);
-                                                                UPDBG("\t0x%x",databuf[3]);
-                                                                 UPDBG("\n");*/
-								 HandleBlueToothData(databuf, 4);
-										
-	   	                	 	 	}
-									
-	   	                	 	}
-								
-	   	                	 }
-
-							
-	   	                 }						
-	
-	                    }
-//#endif
-
-	            }
-		     else{
-			 	UPDBG("not tty bt_fd.\n");
-		     }		
-	        }
-		else if(ret == 0){
-			UPDBG("bt read wait timeout!!!\n");
-			gBTStatusFlag = 0x00;
-		}
-		else{// ret <0
-			UPDBG("bt select error.\n");
-			//perror(ret);
-		}
-		
-	
-        }
-		
-    	UPDBG("exit from reading bt com\n");
-        return NULL; /* wait for child to die or it will become a zombie */
-}
-
-
-
-void* RFIDRevPthread(void * data)
-{
-    //UPDBG("rfid rev pthread.\n");
-
-    struct timeval tv;
-    fd_set rfds;
-
-    tv.tv_sec=15;
-    tv.tv_usec=0;
-
-    int nread;
-    int i,j,ret,datalen;
-
-    unsigned char buff[BUFSIZE]={0,};
-    unsigned char databuf[BUFSIZE]={0,};
-    ret = 0;
-		
-	//pthread_detach(pthread_self());
-        while (STOP==FALSE)
-        {
-                //UPDBG("rf phread wait...\n");
-		
-	        tv.tv_sec=10;
-	        tv.tv_usec=0;
-			
-	        FD_ZERO(&rfds);
-	        FD_SET(rf_fd, &rfds);
-		ret = select(1+rf_fd, &rfds, NULL, NULL, &tv);
-
-	        if(ret >0)
-	        {
-                    //UPDBG("rf select wait...\n");
-	            if (FD_ISSET(rf_fd, &rfds))
-	            {
-//#if 0
-	                nread=tty_read(rf_fd,buff, 6);
-                        //UPDBG("readlen=%d\n", nread);
-	                buff[nread]='\0';
-                        /*UPDBG("\n---RFID DATA:");
-			 for(i=0;i<nread;i++){
-			 	UPDBG("0x%x\t",buff[i]);
-			 }		
-                        UPDBG("\n");*/
-
-			 databuf[0] = Data_CalcFCS(buff, 5);
-			 if(databuf[0]==buff[5]){
-                                      //UPDBG("CalcFcs OK\n");
-				      HandleRFIDData(buff+1, 4);	
-			 }
-			 else{
-			 	continue;
-			 }
-//#endif				
-#if 0	            
-                        //gBTStatusFlag = 0x01;// any data of uart can flag it's status.
-	                nread=tty_read(rf_fd,buff, 1);
-                        //UPDBG("readlen=%d\n", nread);
-	                buff[nread]='\0';
-                        //UPDBG("0x%x\n",buff[0]);
-
-//#if 0
-	                    if(buff[0]==0x1A){
-	                        i=0;
-	                        databuf[i] = buff[0];
-	                        i++;							
-		                nread=tty_read(rf_fd,buff, 4);
-                                //UPDBG("read rfidlen=%d\n", nread);
-		                buff[nread]='\0';
-	                        databuf[i] = buff[0];
-	                        i++;
-	                        databuf[i] = buff[1];
-	                        i++;	
-	                        databuf[i] = buff[2];
-	                        i++;
-	                        databuf[i] = buff[3];
-	                        i++;								
-                                /*UPDBG("\n0x%x",buff[0]);
-                                UPDBG("\r0x%x",buff[1]);
-                                UPDBG("\r0x%x",buff[2]);
-                                UPDBG("\r0x%x",buff[3]);
-                                UPDBG("\n");*/
-
-	                        nread=tty_read(rf_fd,buff, 1);
-                                //UPDBG("readlen=%d\n", nread);
-                                //UPDBG("rCalcFcs:%x\n",buff[0]);
-
-	                        databuf[5]= Data_CalcFCS(databuf, 5);
-                                //UPDBG("cCalcFcs:%x\n",databuf[5]);
-	                        if(databuf[5]==buff[0]){
-                                    //UPDBG("CalcFcs OK\n");
-				      HandleRFIDData(databuf+1, 4);	
-	                        }
-				  else{
-					continue;
-				  }			
-
-	
-	                    }
-//#endif
-#endif	
-	            }			
-		     else{
-			 	UPDBG("not tty rf_fd.\n");
-		     }				 
-	        }
-		else if(ret == 0){
-			UPDBG("rf read wait timeout!!!\n");
-			//gBTStatusFlag = 0x00;
-		}
-		else{// ret <0
-			UPDBG("rf select error.\n");
-			//perror(ret);
-		}
-		
-	
-        }
-		
-    	UPDBG("exit from reading rf com\n");
-        return NULL; /* wait for child to die or it will become a zombie */
-}
-
 
 void* MsgRevPthread(void )
 {
@@ -1359,8 +1273,9 @@ int ComPthreadMonitorStart(void)
         sa.sa_flags = 0;
         sigaction(SIGCHLD,&sa,NULL); /* handle dying child */
 		
-	 pthread_mutex_init(&mutex, NULL);
-	 
+	    pthread_mutex_init(&mutex, NULL);
+	    pthread_mutex_init(&mutex_trans,NULL);
+
         pthread_create(&th_kb, NULL, KeyBoardPthread, 0);
         //@wei recv thread created here.
         pthread_create(&th_rev, NULL, ComRevPthread, 0);

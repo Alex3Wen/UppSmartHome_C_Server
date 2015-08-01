@@ -10,6 +10,7 @@ extern void * retval;
 extern unsigned int gSim;
 extern unsigned int gSend;
 extern unsigned char gIntLock;
+extern unsigned char gRegister_ready;
 
 extern unsigned char gNwkStatusFlag;
 extern unsigned char gFrameValidFlag;
@@ -67,6 +68,7 @@ extern int ComPthreadMonitorExit(void);
 //bywei
 extern NodeInfo *GetZigBeeNwkTopoHead(void);
 int plat_other_fd,qt_fd;
+extern int qt_socket_fd;
 #define UINT_QUEUE_SIZE (6)
 typedef struct
 {

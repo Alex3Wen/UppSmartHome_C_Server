@@ -61,7 +61,7 @@ int tty_write(int _fd,unsigned char *buf,int nbytes)
         for(i=0; i<nbytes; i++) {
                 write(_fd,&buf[i],1);
                 //printf("%c",buf[i]);
-                usleep(1000);
+                //usleep(1000);
         }
         //printf("\n"); //comment by wei
         return tcdrain(_fd);

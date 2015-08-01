@@ -2,6 +2,9 @@
 #ifndef __WEI_UTIL
 #define __WEI_UTIL
 
+typedef unsigned int u32;
+
+
 #define KDEBUG_ENABLE
 #ifdef KDEBUG_ENABLE
 #define Kdbg(x...) {printk("\nkernel# fun: ");printk(x);printk("\n");}while(0)
@@ -20,13 +23,14 @@
 
 #define USER_DBG_EN
 #ifdef USER_DBG_EN
-#define Udbg(x...) {printf("\nkernel# fun: ");printf(x);printf("\n");}while(0)
-#define Udbgln(x...) {printf("kernel # ");printf(x);printf("\n");}while(0)
+#define Udbg(x...) {printf("user# fun: ");printf(x);}while(0)
+#define Udbgln(x...) {printf("user # ");printf(x);printf("\n");}while(0)
 #define Udbgv(v) {printf("kernel # ");printf(#v);printf("\t:%08x %d \n",v , v);}while(0)
 #define ULdbg() printf("line :%d fun:%s \n",__LINE__,__FUNCTION__)
 #else
 #define Udbg(x...) 
 #define Udbgv(x...) 
+#define Udbgln(x...)
 #define ULdbg() 
 #endif
 

@@ -16,6 +16,7 @@ extern pNodeInfo DeviceNodePop(void);
 
 //@wei
 extern bool Server_GetZigBeeNwkTopo(int fd);
+extern bool Server_ErrorFeedback(int fd,unsigned int err);
 /*
 extern bool ZigBeeNwkDetect(void);
 extern bool GetZigBeeNwkInfo(NwkDesp *pNwkDesp);

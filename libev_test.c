@@ -14,6 +14,9 @@
 #include <sys/signal.h>
 
 #include "global.h"
+#include "RFID_handler.h"
+#include "list.h"
+#include "fd_list.h"
 
 #define MAXLEN 1023
 
@@ -24,6 +27,7 @@ int sockfd;
 struct timeval tv;
 fd_set sds;
 static int flag_bind=0;
+int qt_socket_fd = 0;
 
 bool Server_GetZigBeeNwkInfo(int fd);
 
@@ -31,7 +35,7 @@ bool Server_GetZigBeeNwkTopo(int fd);
 bool Server_GetTempHum(int fd);
 
 bool Server_SetSensorStatus(int fd,unsigned int addr,unsigned int state);
-
+bool Server_ErrorFeedback(int ,unsigned int);//by @wei
 int Server_GetRfidId(int fd);
 int Server_GetGPRSSignal(int fd);
 bool Server_SendGprsMessage(int fd,unsigned int *phone,unsigned int sensor);
@@ -80,7 +84,8 @@ int main(int argc ,char** argv)
         ComPthreadMonitorStart();
 
     }
-     UPDBG("kkk\n");
+    init_sqlite_RFID();
+    list_fd_init();
 
     init_int_queue(&pQueue);
 
@@ -187,6 +192,7 @@ int socket_init(char** argv)
 
 #define QT_CLIENT_ADDR "10.0.136.142"
 
+//extern struct list_head head;
 void accept_callback(struct ev_loop *loop, ev_io *w, int revents)
 {
     int newfd;
@@ -208,12 +214,24 @@ void accept_callback(struct ev_loop *loop, ev_io *w, int revents)
             break;
         }
     }
-    UPDBG("Got connection from %s\n",inet_ntoa(their_addr.sin_addr));
+    Udbg("Got connection from %s\n",inet_ntoa(their_addr.sin_addr));
     if(!(int)strcmp(inet_ntoa(their_addr.sin_addr),QT_CLIENT_ADDR)){
         qt_fd = w->fd;
+        qt_socket_fd = newfd;
         Udbg("get fd from qt %d\n",qt_fd);
     }else{
         plat_other_fd = w->fd;
+        add_fd(plat_other_fd,newfd);
+
+        reg_fd_list_t *entry;
+        list_for_each(iterator,&head)//遍历  
+        {
+            entry = list_entry(iterator,reg_fd_list_t,node);//读取某个值  
+            printf("socketfd :%d\n",entry->socketfd);
+            ULdbg();
+            printf("head addr is %08x\n",iterator);
+        }
+        //skimfd();
     }
 
     //@wei If connection came from others expcept for qt client.
@@ -332,16 +350,6 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
                         UPDBG("COMMAND:-------GetTempHum--------:\n");
                         Server_GetTempHum(w->fd);
                         break;
-                case 0x06:
-
-                        UPDBG("COMMAND:-------SendGprsMessage--------:\n");//
-                        Server_SendGprsMessage(w->fd,&buffer[2],buffer[13]);
-                        break;
-                case 0x07:
-
-                        UPDBG("COMMAND:-------get GPRSSignal--------:\n");
-                        Server_GetGPRSSignal(w->fd);
-                        break;
                 case 0x08:
 
                         Udbg("COMMAND:-------clear intrupt--------:\n");
@@ -350,6 +358,46 @@ void recv_callback(struct ev_loop *loop, ev_io *w, int revents)
                 case 0x09:
                         Udbg("Command : get real time picture\n");
                         ClientGetRealPic(w->fd);
+                        break;
+                case 0x10://0x0a is end of frame
+                        Udbg("Command:register UID \n");
+                        Udbgv(buffer[3]);
+                        switch(buffer[2]){
+                            case 0x01://registing
+                                gRegister_ready = 1;
+                                registering_fd = w->fd;
+                                Udbg("ready to register\n");
+                            break;
+                            case 0x02:
+                                //removing
+                                ret = delete_ID(buffer[3]);
+                                if(!ret)
+                                    Udbg("delete successfully\n");
+                                Server_ErrorFeedback(w->fd,0);
+                                break;
+                            case 0x03:
+                                //if(w->fd != qt_socket_fd)
+                                Udbgv(w->fd);
+                                Udbgv(qt_socket_fd);
+                                if(w->fd == qt_socket_fd){
+                                    Server_SetSensorStatus(w->fd,rf_nwk,1);
+                                    break;
+                                }else{
+                                    ret = RFID_verify(buffer[3]);
+                                    if(ret){
+                                         //open door:
+                                        Server_SetSensorStatus(w->fd,rf_nwk,1);
+                                    }else{
+                                        Server_ErrorFeedback(w->fd,ERROR_ID_NOT_EXIST);
+                                        Udbg("not exist ID!\n");
+                                    }
+                                }
+                               
+                        }
+                        break;
+                case 0x11:
+
+                        break;
                 default:
                         UPDBG("error COMMAND\n");
                         break;
@@ -452,18 +500,30 @@ bool Server_GetZigBeeNwkInfo(int fd){
 
 bool Server_SetSensorStatus(int fd,unsigned int addr,unsigned int state)
 {
-    Udbg(" SetSensorStatus addr  = %08x ,state = %08x",addr,state);
+    Udbg(" SetSensorStatus nwk  = %08x ,state = %08x",addr,state);
     SetSensorStatus(addr,state);
+    usleep(500000);
+    CMD_GetZigBeeNwkTopo();
     UPDBG("Server:Server_SetSensorStatus end");
     return TRUE;
 
+}
+
+bool Server_ErrorFeedback(int fd,unsigned int err){
+    unsigned int error[4] = {0x26,0xff,err,0x0a};
+    int len=write(fd, (unsigned int*)(&error), sizeof(error));
+        if(len<=0)
+        {
+            return FALSE;
+        }
+        return TRUE;
 }
 
 bool Server_GetZigBeeNwkTopo(int fd){
     struct NodeInfo* pNodeNwkTopoInfo ,*q;
     //modify by wei 
     pNodeNwkTopoInfo = GetZigBeeNwkTopoHead();//pNodeNwkTopoInfo=GetZigBeeNwkTopo();
-
+    int ret ;
     //UPDBG("gNwkStatusFlag=%d\n",gNwkStatusFlag);
     topo_buffer[0]=0x26;
     topo_buffer[1]=0x01;
@@ -524,14 +584,29 @@ bool Server_GetZigBeeNwkTopo(int fd){
             }
             topo_buffer[20+18*j]='\n';
             //UPDBG("cliect topo_buffer[%d]=%d\n",20+18*j,topo_buffer[20+18*j]);
-            write(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*(20+18*j+1));
+            //write(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*(20+18*j+1));
+
+            ret = write_securely(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*(20+18*j+1));
+            if(ret < 0){
+                Udbgln("fd is not exist");
+                return FALSE;
+            }
         }
     }
     else{
 
         topo_buffer[2]=0x01;//for offline
         topo_buffer[3]='\n';
-        write(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*4);
+        //write(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*4);
+        if(fd == qt_socket_fd){
+            write(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*4);
+        }else{
+            ret = write_securely(fd, (unsigned int*)(&topo_buffer), sizeof(unsigned int)*4);
+            if(ret<0){
+                Udbgln("write error");
+                return FALSE;
+            }
+        }
     }
 
 
@@ -641,7 +716,7 @@ int ClientGetRealPic(int qt_fd){
 
     return 1;
 }
-int qt_socket_fd;
+
 int Server_GetRealPic(int fd){
     unsigned int buffer[4]={0};
     buffer[0]=0x26;
